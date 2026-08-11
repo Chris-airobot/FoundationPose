@@ -1,0 +1,61 @@
+# FoundationPose env setup (conda)
+
+What we actually used on this machine (RTX 4090, CUDA toolkit at `/home/chris/cuda-12.8-min`).
+
+```bash
+cd /home/chris/Projects/internship/Samsung/FoundationPose
+
+# 1) Create env
+conda env create -f environment.yml
+conda activate foundationpose
+
+# 2) PyTorch (CUDA 12.8 wheels)
+python -m pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# 3) CUDA paths needed to compile extensions
+export CUDA_HOME=/home/chris/cuda-12.8-min
+export PATH="$CUDA_HOME/bin:$PATH"
+export CPATH="$CUDA_HOME/targets/x86_64-linux/include:${CPATH:-}"
+export C_INCLUDE_PATH="$CUDA_HOME/targets/x86_64-linux/include:${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="$CUDA_HOME/targets/x86_64-linux/include:${CPLUS_INCLUDE_PATH:-}"
+export LIBRARY_PATH="$CUDA_HOME/targets/x86_64-linux/lib:${LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+export TORCH_CUDA_ARCH_LIST="8.9"
+
+# 4) GPU extensions
+python -m pip install --no-build-isolation "git+https://github.com/facebookresearch/pytorch3d.git"
+python -m pip install --no-build-isolation "git+https://github.com/NVlabs/nvdiffrast.git"
+
+# 5) Remaining Python deps + mycpp
+python -m pip install -r requirements.txt
+bash build_all_conda.sh
+
+# 6) Check
+python check_env.py
+```
+
+## Weights layout
+
+```text
+weights/
+  2023-10-28-18-33-37/   # refiner
+    model_best.pth
+    config.yml
+  2024-01-11-20-02-45/   # scorer
+    model_best.pth
+    config.yml
+```
+
+If Google Drive unzip creates an extra nested folder name, move the inner timestamp folder up so it sits directly under `weights/`.
+
+## Demo data
+
+Extract under `demo_data/` (e.g. `demo_data/mustard0/`).
+
+## Run demo
+
+```bash
+conda activate foundationpose
+cd /home/chris/Projects/internship/Samsung/FoundationPose
+python run_demo.py
+```
