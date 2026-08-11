@@ -52,6 +52,35 @@ If Google Drive unzip creates an extra nested folder name, move the inner timest
 
 Extract under `demo_data/` (e.g. `demo_data/mustard0/`).
 
+## Capture a RealSense box sequence (no ROS)
+
+If company policy permits installing the official RealSense Python wrapper inside this Conda environment:
+
+```bash
+conda activate foundationpose
+python -m pip install pyrealsense2
+
+# Show connected cameras and their serial numbers.
+python capture_realsense_box.py --list-devices
+
+# Select one camera explicitly when multiple RealSense devices are connected.
+python capture_realsense_box.py \
+  --serial REPLACE_WITH_SERIAL \
+  --output-dir demo_data/box_test
+```
+
+Press `S`, draw a tight rectangle around the box, and press Enter to start recording. The script aligns depth to color, converts depth to 16-bit millimetres, saves the first-frame mask, and writes the color-camera intrinsics to `cam_K.txt`. It records 300 frames by default; press `Q` to stop earlier. It refuses to write into a non-empty output directory.
+
+Run the captured sequence with a dedicated debug directory (the demo clears that directory at startup):
+
+```bash
+python run_demo.py \
+  --mesh_file box.obj \
+  --test_scene_dir demo_data/box_test \
+  --debug 2 \
+  --debug_dir debug_box_test
+```
+
 ## Run demo
 
 ```bash
