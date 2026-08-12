@@ -156,3 +156,11 @@ data/
 logs/
 !BundleTrack/XMem/inference/data
 run_used.yml
+# G1 local recordings / generated outputs
+g1/data/g1_recording/rgb/
+g1/data/g1_recording/depth/
+g1/data/g1_recording/masks/
+g1/results/
+g1/logs/
+debug_box_test/
+*.pre_align_backup
