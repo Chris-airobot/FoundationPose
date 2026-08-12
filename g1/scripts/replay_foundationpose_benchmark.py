@@ -27,8 +27,17 @@ def fps_from_times(ts):
     return (len(ts) - 1) / dt if dt > 0 else 0.0
 
 
+def load_rgb(path):
+    # cv2.imread returns BGR, while FoundationPose expects RGB.
+    bgr = cv2.imread(str(path), cv2.IMREAD_COLOR)
+    if bgr is None:
+        raise RuntimeError(f'Failed to read RGB frame: {path}')
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+
+
 def mask_ui(rgb):
-    bgr = rgb[..., ::-1].copy()
+    # OpenCV display expects BGR; inference keeps RGB.
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
     shown = bgr.copy(); pts = []
     win = 'Offline benchmark: draw first-frame mask'
 
@@ -74,7 +83,7 @@ def main():
         scorer=ScorePredictor(), refiner=PoseRefinePredictor(), debug_dir=str(OUT), debug=0,
         glctx=dr.RasterizeCudaContext())
 
-    rgb0 = cv2.imread(str(rgb_files[0]), cv2.IMREAD_COLOR)
+    rgb0 = load_rgb(rgb_files[0])
     dep0 = depth_m(cv2.imread(str(dep_files[0]), cv2.IMREAD_UNCHANGED))
     mask_dir = DATA / 'masks'; mask_dir.mkdir(exist_ok=True)
     mask_file = mask_dir / '000000.png'
@@ -97,7 +106,7 @@ def main():
     start = time.perf_counter()
 
     for i in range(1, n):
-        rgb = cv2.imread(str(rgb_files[i]), cv2.IMREAD_COLOR)
+        rgb = load_rgb(rgb_files[i])
         dep = depth_m(cv2.imread(str(dep_files[i]), cv2.IMREAD_UNCHANGED))
         t0 = time.perf_counter()
         pose = est.track_one(rgb=rgb, depth=dep, K=K, iteration=TRACK_ITERS)
@@ -110,7 +119,7 @@ def main():
             vis = draw_posed_3d_box(K, img=rgb, ob_in_cam=cp, bbox=bbox)
             vis = draw_xyz_axis(vis, ob_in_cam=cp, scale=0.1, K=K, thickness=3,
                                 transparency=0, is_input_rgb=True)
-            show = vis[..., ::-1].copy()
+            show = cv2.cvtColor(vis, cv2.COLOR_RGB2BGR)
             txt = f'offline pose {pose_fps:.1f} FPS | track {track_ms:.1f} ms | frame {i}/{n-1}'
             cv2.putText(show, txt, (15, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,255,0), 2)
             cv2.imshow('FoundationPose OFFLINE benchmark', show)
