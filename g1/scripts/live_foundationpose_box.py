@@ -1,6 +1,8 @@
-import os, sys, base64
+import os, sys, base64, time, threading
+from collections import deque
 from pathlib import Path
 import cv2, zmq, msgpack, numpy as np
+
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT))
 from estimater import *
@@ -9,6 +11,9 @@ ENDPOINT='tcp://192.168.123.164:5555'
 INIT=ROOT/'g1/data/live_init'
 OUT=ROOT/'g1/results/live_foundationpose'
 K=np.loadtxt(INIT/'cam_K.txt').reshape(3,3)
+
+cam_times=deque(maxlen=120)
+cam_lock=threading.Lock()
 
 
 def decode(payload):
@@ -24,6 +29,25 @@ def depth_m(d):
     d=d.astype(np.float32)/1000.0
     d[(d<0.001)|(d>10.0)]=0
     return d
+
+
+def fps_from_times(times):
+    if len(times)<2: return 0.0
+    dt=times[-1]-times[0]
+    return (len(times)-1)/dt if dt>0 else 0.0
+
+
+def camera_fps_monitor():
+    ctx=zmq.Context(); sock=ctx.socket(zmq.SUB)
+    sock.setsockopt_string(zmq.SUBSCRIBE,'')
+    sock.connect(ENDPOINT)
+    while True:
+        try:
+            sock.recv()
+            with cam_lock:
+                cam_times.append(time.perf_counter())
+        except Exception:
+            break
 
 
 def mask_ui(rgb):
@@ -62,23 +86,53 @@ def main():
     pose=est.register(K=K,rgb=rgb0,depth=dep0,ob_mask=mask,iteration=5)
     np.savetxt(OUT/'init_pose.txt',pose)
 
+    threading.Thread(target=camera_fps_monitor,daemon=True).start()
+
     ctx=zmq.Context(); sock=ctx.socket(zmq.SUB)
     sock.setsockopt_string(zmq.SUBSCRIBE,''); sock.setsockopt(zmq.CONFLATE,1)
     sock.connect(ENDPOINT)
     print('LIVE: q quit, r redraw mask/re-register')
+    print('Starting with track iterations=2; auto-switch to 1 if measured pose FPS stays below 30.')
+
     i=0
+    pose_times=deque(maxlen=60)
+    track_iters=2
+    switched=False
+    measure_start=time.perf_counter()
+    last_report=measure_start
+
     try:
         while True:
             im=decode(sock.recv())
             if 'ego_view' not in im or 'ego_view_depth' not in im: continue
             rgb=im['ego_view']; dep=depth_m(im['ego_view_depth'])
-            pose=est.track_one(rgb=rgb,depth=dep,K=K,iteration=2)
+
+            t0=time.perf_counter()
+            pose=est.track_one(rgb=rgb,depth=dep,K=K,iteration=track_iters)
+            track_ms=(time.perf_counter()-t0)*1000.0
+
             np.savetxt(OUT/'latest_pose.txt',pose)
+            now=time.perf_counter(); pose_times.append(now)
+            pose_fps=fps_from_times(pose_times)
+            with cam_lock:
+                camera_fps=fps_from_times(list(cam_times))
+
+            if (not switched and track_iters==2 and now-measure_start>=3.0
+                    and len(pose_times)>=8 and pose_fps<29.5):
+                print(f'Pose FPS {pose_fps:.2f} < 30: switching track iterations 2 -> 1')
+                track_iters=1; switched=True; pose_times.clear(); measure_start=now
+
+            if now-last_report>=1.0:
+                print(f'camera-arrival FPS={camera_fps:.2f} | pose-output FPS={pose_fps:.2f} | '
+                      f'track={track_ms:.1f} ms | iterations={track_iters}')
+                last_report=now
+
             cp=pose@np.linalg.inv(to_origin)
             vis=draw_posed_3d_box(K,img=rgb,ob_in_cam=cp,bbox=bbox)
             vis=draw_xyz_axis(vis,ob_in_cam=cp,scale=0.1,K=K,thickness=3,transparency=0,is_input_rgb=True)
             show=vis[...,::-1].copy()
-            cv2.putText(show,f'frame {i} | q quit | r reinit',(15,28),cv2.FONT_HERSHEY_SIMPLEX,0.65,(0,255,0),2)
+            text=f'cam {camera_fps:.1f} FPS | pose {pose_fps:.1f} FPS | {track_ms:.0f} ms | iter {track_iters}'
+            cv2.putText(show,text,(15,28),cv2.FONT_HERSHEY_SIMPLEX,0.58,(0,255,0),2)
             cv2.imshow('G1 FoundationPose Live',show)
             key=cv2.waitKey(1)&0xFF
             if key==ord('q'): break
@@ -86,6 +140,7 @@ def main():
                 m=mask_ui(rgb)
                 if m is not None:
                     pose=est.register(K=K,rgb=rgb,depth=dep,ob_mask=m,iteration=5)
+                    pose_times.clear(); measure_start=time.perf_counter()
             i+=1
     finally:
         cv2.destroyAllWindows(); sock.close(0); ctx.term()
