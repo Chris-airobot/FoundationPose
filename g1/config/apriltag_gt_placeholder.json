@@ -1,0 +1,12 @@
+{
+  "dictionary": "DICT_APRILTAG_36h11",
+  "marker_id": 0,
+  "marker_size_m": 0.08,
+  "T_tag_box": [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0]
+  ],
+  "note": "PLACEHOLDERS ONLY. T_tag_box means box frame expressed in tag frame, so T_camera_box = T_camera_tag @ T_tag_box. Replace marker id, physical black-square tag size, and calibrated T_tag_box before treating AprilTag as reference pose."
+}
