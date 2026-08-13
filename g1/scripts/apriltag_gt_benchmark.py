@@ -159,7 +159,7 @@ def main():
     detect_fn = make_detector(cfg['dictionary'])
 
     print('APRILTAG REFERENCE BENCHMARK')
-    print('WARNING: marker id, marker size and T_tag_box are PLACEHOLDERS right now.')
+    print('Marker family/id/size and measured in-plane offset are configured; validate the current box-face orientation assumption once from the overlay.')
     print(f"dictionary={cfg['dictionary']} | marker_id={wanted_id} | marker_size={tag_size_m:.3f} m")
     print('T_camera_box(tag reference) = T_camera_tag @ T_tag_box')
     print('Draw FoundationPose mask once, then move the box freely. Q quits.')
@@ -288,7 +288,7 @@ def main():
         sock.close(0)
         ctx.term()
         print('Saved:', csv_path)
-        print('Do NOT interpret the pose error as valid until marker size/id/T_tag_box are replaced with real values.')
+        print('AprilTag is a reference estimate. Validate the configured box-face/orientation convention from the overlay before treating full pose error as ground truth.')
 
 
 if __name__ == '__main__':
