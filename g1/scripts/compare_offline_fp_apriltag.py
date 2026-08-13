@@ -65,12 +65,23 @@ def rx(deg):
     ], dtype=np.float64)
 
 
-BOX_SYMMETRIES = [rx(0), rx(90), rx(180), rx(270)]
+def rot180_about_yz_axis(phi_deg):
+    # 180-degree rotation around unit axis u=(0, cos(phi), sin(phi)).
+    a = math.radians(phi_deg)
+    u = np.asarray([0.0, math.cos(a), math.sin(a)], dtype=np.float64)
+    return 2.0 * np.outer(u, u) - np.eye(3)
+
+
+# Proper rotational symmetry group of a 40x30x30 cuboid (D4, 8 elements):
+# four rotations around the long X axis plus four 180-degree flips around axes
+# lying in the square Y-Z cross-section. These all map the untextured cuboid
+# geometry onto itself.
+BOX_SYMMETRIES = [rx(a) for a in (0, 90, 180, 270)] + [
+    rot180_about_yz_axis(a) for a in (0, 45, 90, 135)
+]
 
 
 def symmetry_rotation_error_deg(R_fp, R_tag_box):
-    # 40x30x30 cuboid: the Y-Z cross-section is square, so rotations by
-    # 0/90/180/270 degrees around the 40 cm object X axis are geometrically equivalent.
     return min(rot_angle_deg(R_fp, R_tag_box @ S) for S in BOX_SYMMETRIES)
 
 
@@ -157,7 +168,7 @@ def main():
     print('OFFLINE FOUNDATIONPOSE vs APRILTAG COMPARISON')
     print('Recorded files only: NO robot, NO camera stream, NO ZMQ.')
     print('Green = FoundationPose | Yellow = AprilTag-derived box | Cyan = AprilTag')
-    print('Rotation reports both raw SO(3) error and symmetry-aware error for the 40x30x30 box.')
+    print('Rotation reports raw SO(3) error and full geometry-symmetry-aware error for the 40x30x30 box.')
     print('SPACE pause | S save overlay | Q quit')
 
     try:
@@ -299,7 +310,7 @@ def main():
             'median': float(np.median(rot_sym)) if rot_sym else None,
             'p95': percentile_or_none(rot_sym, 95),
         },
-        'symmetry_note': 'For the 40x30x30 cuboid, rotations by 0/90/180/270 deg around object X are geometrically equivalent because the Y-Z cross-section is 30x30 cm.',
+        'symmetry_note': 'The untextured 40x30x30 cuboid has 8 proper rotational symmetries (D4), including 180-degree flips as well as 90-degree rotations around the long axis.',
     }
     out_json.write_text(json.dumps(summary, indent=2))
 
