@@ -1,5 +1,7 @@
 # FoundationPose for RGB-D Box Pose Tracking
 
+**English** | [简体中文](README_zh-CN.md)
+
 This repository adapts [NVIDIA FoundationPose](https://github.com/NVlabs/FoundationPose) for **6D pose estimation and continuous RGB-D tracking of a known package box**.
 
 The focus of this repository is the **vision module only**: RGB-D acquisition, depth-to-color alignment, one-time object registration, continuous FoundationPose tracking, runtime benchmarking, offline replay, and tracking-stability analysis.
