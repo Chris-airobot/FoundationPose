@@ -20,6 +20,14 @@ def parse_args():
     p.add_argument('--every', type=int, default=1, help='Visualize every Nth frame.')
     p.add_argument('--max-frames', type=int, default=0, help='0 = all frames.')
     p.add_argument('--save-video', action='store_true')
+    p.add_argument(
+        '--clean-video',
+        action='store_true',
+        help=(
+            'Render only the FoundationPose box overlay. AprilTag/reference overlays, '
+            'axes, and comparison metrics are hidden, while evaluation is still computed.'
+        ),
+    )
     return p.parse_args()
 
 
@@ -163,11 +171,15 @@ def main():
     compared = 0
     saved = 0
     video = None
+    video_path = None
     paused = False
 
     print('OFFLINE FOUNDATIONPOSE vs APRILTAG COMPARISON')
     print('Recorded files only: NO robot, NO camera stream, NO ZMQ.')
-    print('Green = FoundationPose | Yellow = AprilTag-derived box | Cyan = AprilTag')
+    if args.clean_video:
+        print('Clean visualization: FoundationPose overlay only; AprilTag is used only for evaluation.')
+    else:
+        print('Green = FoundationPose | Yellow = AprilTag-derived box | Cyan = AprilTag')
     print('Rotation reports raw SO(3) error and full geometry-symmetry-aware error for the 40x30x30 box.')
     print('SPACE pause | S save overlay | Q quit')
 
@@ -232,37 +244,52 @@ def main():
             vis = bgr.copy()
             draw_wireframe(vis, project(box_pts, T_fp, K), (0, 255, 0), 2)
 
-            if T_tag_box_cam is not None:
-                draw_wireframe(vis, project(box_pts, T_tag_box_cam, K), (0, 255, 255), 2)
-                tag_uv = project(tag_pts, T_tag, K)
-                if tag_uv is not None:
-                    p = np.round(tag_uv).astype(np.int32)
-                    cv2.polylines(vis, [p.reshape(-1, 1, 2)], True, (255, 255, 0), 2, cv2.LINE_AA)
-                rvec, _ = cv2.Rodrigues(T_tag[:3, :3])
-                cv2.drawFrameAxes(vis, K, None, rvec, T_tag[:3, 3], float(cfg['marker_size_m']) * 0.7, 2)
-
-                line1 = f'frame {frame_id} | trans={trans_mm:.1f} mm | distance={dist_mm:.1f} mm'
-                line2 = f'rotation raw={raw_deg:.1f} deg | symmetry-aware={sym_deg:.1f} deg'
+            if args.clean_video:
+                cv2.putText(
+                    vis,
+                    'FoundationPose tracking',
+                    (10, 28),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.58,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
             else:
-                line1 = f'frame {frame_id} | AprilTag not detected'
-                line2 = 'FoundationPose still shown in green'
+                if T_tag_box_cam is not None:
+                    draw_wireframe(vis, project(box_pts, T_tag_box_cam, K), (0, 255, 255), 2)
+                    tag_uv = project(tag_pts, T_tag, K)
+                    if tag_uv is not None:
+                        p = np.round(tag_uv).astype(np.int32)
+                        cv2.polylines(vis, [p.reshape(-1, 1, 2)], True, (255, 255, 0), 2, cv2.LINE_AA)
+                    rvec, _ = cv2.Rodrigues(T_tag[:3, :3])
+                    cv2.drawFrameAxes(vis, K, None, rvec, T_tag[:3, 3], float(cfg['marker_size_m']) * 0.7, 2)
 
-            cv2.putText(vis, line1, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255,255,255), 2)
-            cv2.putText(vis, line2, (10, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255,255,255), 2)
-            cv2.putText(vis, 'green=FP  yellow=tag-box  cyan=tag | SPACE pause S save Q quit',
-                        (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (255,255,255), 1)
+                    line1 = f'frame {frame_id} | trans={trans_mm:.1f} mm | distance={dist_mm:.1f} mm'
+                    line2 = f'rotation raw={raw_deg:.1f} deg | symmetry-aware={sym_deg:.1f} deg'
+                else:
+                    line1 = f'frame {frame_id} | AprilTag not detected'
+                    line2 = 'FoundationPose still shown in green'
+
+                cv2.putText(vis, line1, (10, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (255,255,255), 2)
+                cv2.putText(vis, line2, (10, 54), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (255,255,255), 2)
+                cv2.putText(vis, 'green=FP  yellow=tag-box  cyan=tag | SPACE pause S save Q quit',
+                            (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.43, (255,255,255), 1)
 
             if args.save_video and video is None:
                 h, w = vis.shape[:2]
+                video_name = 'foundationpose_clean.mp4' if args.clean_video else 'comparison_overlay.mp4'
+                video_path = out_dir / video_name
                 video = cv2.VideoWriter(
-                    str(out_dir / 'comparison_overlay.mp4'),
+                    str(video_path),
                     cv2.VideoWriter_fourcc(*'mp4v'), 15.0, (w, h)
                 )
             if video is not None:
                 video.write(vis)
 
+            window_name = 'FoundationPose tracking' if args.clean_video else 'Offline FP vs AprilTag'
             while True:
-                cv2.imshow('Offline FP vs AprilTag', vis)
+                cv2.imshow(window_name, vis)
                 key = cv2.waitKey(0 if paused else 25) & 0xFF
                 if key == ord('q'):
                     raise KeyboardInterrupt
@@ -273,7 +300,8 @@ def main():
                     continue
                 if key == ord('s'):
                     saved += 1
-                    cv2.imwrite(str(out_dir / f'overlay_{saved:03d}.png'), vis)
+                    prefix = 'clean_overlay' if args.clean_video else 'overlay'
+                    cv2.imwrite(str(out_dir / f'{prefix}_{saved:03d}.png'), vis)
                     print('saved overlay', saved)
                 if not paused:
                     break
@@ -323,6 +351,8 @@ def main():
         print(f'rotation symmetry-aware deg: mean={np.mean(rot_sym):.2f} median={np.median(rot_sym):.2f} p95={np.percentile(rot_sym,95):.2f}')
     print('saved:', out_csv)
     print('saved:', out_json)
+    if video_path is not None:
+        print('saved:', video_path)
 
 
 if __name__ == '__main__':
