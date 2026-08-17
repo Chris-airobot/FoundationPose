@@ -16,11 +16,13 @@ RGB + aligned depth + camera intrinsics + box mesh
               6D box pose in camera frame
 ```
 
-## Demo video
+## Demo
 
-🎥 **Live RGB-D box-tracking demo:** _video link to be added_
+![FoundationPose RGB-D box tracking](assets/demo/foundationpose_demo.gif)
 
-A useful demo should show the RGB view with the estimated 3D box/axes while the box is moved to several positions and distances. Showing the live FPS/timing overlay is also helpful.
+**Full continuous tracking sequence:** [Watch the full video](assets/demo/foundationpose_full.mp4)
+
+The animated preview is a 10-second excerpt from the recorded RGB-D tracking sequence. It shows the FoundationPose box/axes together with the tracking FPS, tracking time, frame index, and estimated distance.
 
 ---
 
