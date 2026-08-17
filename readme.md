@@ -1,56 +1,143 @@
-# FoundationPose for G1 Box Pose Tracking
+# FoundationPose for RGB-D Box Pose Tracking
 
-This repository adapts [NVIDIA FoundationPose](https://github.com/NVlabs/FoundationPose) for **6D pose estimation and continuous tracking of a package box from the Unitree G1 RGB-D camera stream**.
+This repository adapts [NVIDIA FoundationPose](https://github.com/NVlabs/FoundationPose) for **6D pose estimation and continuous RGB-D tracking of a known package box**.
 
-The project is the perception front end of a larger humanoid box-manipulation pipeline. Given a known box mesh, RGB-D observations, camera intrinsics, and a one-time initialization mask, the system estimates the box pose in the camera frame and continuously tracks it while the box or robot moves.
+The focus of this repository is the **vision module only**: RGB-D acquisition, depth-to-color alignment, one-time object registration, continuous FoundationPose tracking, runtime benchmarking, offline replay, and tracking-stability analysis.
 
 ```text
-G1 D435i RGB-D stream
-        ↓
-depth-to-color alignment
-        ↓
-one-time box mask
-        ↓
-FoundationPose register()
-        ↓
-FoundationPose track_one()
-        ↓
-6D box pose: T_camera_box
-        ↓
-robot-frame transform / downstream manipulation
+RGB + aligned depth + camera intrinsics + box mesh
+                         ↓
+                one-time object mask
+                         ↓
+              FoundationPose register()
+                         ↓
+               continuous track_one()
+                         ↓
+              6D box pose in camera frame
 ```
 
 ## Demo video
 
-🎥 **G1 live box-tracking demo:** _video link to be added_
+🎥 **Live RGB-D box-tracking demo:** _video link to be added_
 
-The README is ready for the video. A short recording showing the real RGB image with the tracked 3D box/axes while the box is moved through several positions is sufficient; the link can then be inserted here.
-
-## What has been completed
-
-The current implementation has been tested beyond the original FoundationPose demo:
-
-- [x] Model-based pose estimation using a custom **40 × 30 × 30 cm** box mesh.
-- [x] FoundationPose running on the Samsung RTX workstation with a recent CUDA/PyTorch stack.
-- [x] Unitree G1 RGB-D camera access through the existing ZMQ camera server.
-- [x] RealSense **depth-to-color alignment** before pose estimation.
-- [x] One-time pose registration from an initialization image and mask.
-- [x] Continuous live box tracking with `track_one()`.
-- [x] Latest 4×4 box pose written for downstream use.
-- [x] Live FPS/timing measurement.
-- [x] Offline RGB-D recording and replay utilities.
-- [x] Tracking tests while the box is moved to different positions/ranges.
-- [x] Range/stability analysis tools.
-- [x] AprilTag-based geometry, distance-reference, and sanity-check tools.
-- [x] Camera-to-robot transform and offline root-target utilities for later G1 integration.
-
-The main remaining work is **system integration** with the humanoid manipulation controller, not basic FoundationPose bring-up.
+A useful demo should show the RGB view with the estimated 3D box/axes while the box is moved to several positions and distances. Showing the live FPS/timing overlay is also helpful.
 
 ---
 
-## Box model
+# Environment setup
 
-For the current task the manipulated object is approximated as a rectangular package box:
+The setup below is the reproducible configuration used for the current implementation.
+
+### Tested software stack
+
+- Ubuntu Linux
+- Python **3.11**
+- CUDA Toolkit **12.8**
+- PyTorch **2.7.1 + cu128**
+- torchvision **0.22.1 + cu128**
+- torchaudio **2.7.1 + cu128**
+- PyTorch3D built from source
+- NVDiffRast built from source
+
+A recent NVIDIA GPU is required. The current high-rate benchmark was run on an RTX 5080.
+
+## 1. Clone the repository
+
+```bash
+git clone https://github.com/Chris-airobot/FoundationPose.git
+cd FoundationPose
+```
+
+## 2. Create the Conda environment
+
+```bash
+conda env create -f environment.yml
+conda activate foundationpose
+```
+
+`environment.yml` installs Python 3.11 and the compiler/CMake dependencies required by the CUDA extensions.
+
+## 3. Install PyTorch CUDA 12.8
+
+```bash
+python -m pip install \
+  torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 \
+  --index-url https://download.pytorch.org/whl/cu128
+```
+
+Check that CUDA is visible:
+
+```bash
+python - <<'PY'
+import torch
+print('torch:', torch.__version__)
+print('cuda available:', torch.cuda.is_available())
+print('cuda:', torch.version.cuda)
+if torch.cuda.is_available():
+    print('gpu:', torch.cuda.get_device_name(0))
+PY
+```
+
+## 4. Configure the CUDA toolkit
+
+If CUDA 12.8 is installed in `/usr/local/cuda-12.8`:
+
+```bash
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH="$CUDA_HOME/bin:$PATH"
+export CPATH="$CUDA_HOME/targets/x86_64-linux/include:${CPATH:-}"
+export C_INCLUDE_PATH="$CUDA_HOME/targets/x86_64-linux/include:${C_INCLUDE_PATH:-}"
+export CPLUS_INCLUDE_PATH="$CUDA_HOME/targets/x86_64-linux/include:${CPLUS_INCLUDE_PATH:-}"
+export LIBRARY_PATH="$CUDA_HOME/targets/x86_64-linux/lib:${LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="$CUDA_HOME/targets/x86_64-linux/lib:${LD_LIBRARY_PATH:-}"
+```
+
+Change `CUDA_HOME` if CUDA is installed elsewhere.
+
+## 5. Build/install GPU dependencies
+
+```bash
+python -m pip install --no-build-isolation \
+  "git+https://github.com/facebookresearch/pytorch3d.git"
+
+python -m pip install --no-build-isolation \
+  "git+https://github.com/NVlabs/nvdiffrast.git"
+
+python -m pip install -r requirements.txt
+bash build_all_conda.sh
+```
+
+## 6. Verify the environment
+
+```bash
+python check_env.py
+```
+
+## 7. Download FoundationPose weights
+
+Download the official pretrained FoundationPose weights from the upstream project and place them under `weights/` with this layout:
+
+```text
+weights/
+├── 2023-10-28-18-33-37/    # refiner
+│   ├── model_best.pth
+│   └── config.yml
+└── 2024-01-11-20-02-45/    # scorer
+    ├── model_best.pth
+    └── config.yml
+```
+
+Official weight link from NVIDIA FoundationPose:
+
+https://drive.google.com/drive/folders/1DFezOAD0oD1BblsXVxqDsl8fj0qzB82i?usp=sharing
+
+More installation notes are also kept in [`ENV_SETUP.md`](ENV_SETUP.md).
+
+---
+
+# Box model
+
+The current object is approximated as a rectangular package box:
 
 ```text
 Length: 0.40 m
@@ -58,150 +145,138 @@ Width:  0.30 m
 Height: 0.30 m
 ```
 
-The mesh is stored as:
+The mesh is:
 
 ```text
 box.obj
 ```
 
-and can be regenerated with:
+It can be regenerated with:
 
 ```bash
 python makee_box.py
 ```
 
-The mesh origin is at the center of the box and all dimensions are in metres.
+The origin is at the box center and the mesh units are metres.
 
-Because a CAD/mesh model is available, this project uses the **model-based** FoundationPose path. No object-specific network training is required.
+Because the CAD/mesh is known, this repository uses the **model-based FoundationPose pipeline**. No object-specific network retraining is required.
 
 ---
 
-## Live G1 pipeline
+# Input format
 
-The main live script is:
+FoundationPose requires:
+
+- RGB image
+- depth image
+- camera intrinsic matrix `K`
+- object mesh
+- one object mask for initial registration
+
+A typical recorded sequence follows:
+
+```text
+sequence/
+├── rgb/
+│   ├── 000000.png
+│   ├── 000001.png
+│   └── ...
+├── depth/
+│   ├── 000000.png
+│   ├── 000001.png
+│   └── ...
+├── masks/
+│   └── 000000.png
+└── cam_K.txt
+```
+
+Depth is stored as 16-bit millimetres and converted to metres before being passed to FoundationPose.
+
+Correct **depth-to-color alignment** is important because pose quality degrades when RGB and depth use mismatched image geometry.
+
+---
+
+# Basic model-based test
+
+For an RGB-D sequence already stored in FoundationPose format:
+
+```bash
+conda activate foundationpose
+
+python run_demo.py \
+  --mesh_file box.obj \
+  --test_scene_dir demo_data/box_test \
+  --debug 2 \
+  --debug_dir debug_box_test
+```
+
+FoundationPose performs `register()` on the first frame and then automatically uses `track_one()` for the remaining frames.
+
+---
+
+# RealSense RGB-D capture
+
+A standalone RealSense recorder is provided:
+
+```bash
+python -m pip install pyrealsense2
+python capture_realsense_box.py --list-devices
+```
+
+To record a sequence:
+
+```bash
+python capture_realsense_box.py \
+  --serial REPLACE_WITH_SERIAL \
+  --output-dir demo_data/box_test
+```
+
+The recorder:
+
+- aligns depth to color;
+- saves RGB frames;
+- saves depth as 16-bit millimetres;
+- stores camera intrinsics in `cam_K.txt`;
+- creates the first-frame mask interactively.
+
+---
+
+# Live tracking
+
+The main live tracking script is:
 
 ```text
 g1/scripts/live_foundationpose_box.py
 ```
 
-It connects to the G1 camera server at:
-
-```text
-tcp://192.168.123.164:5555
-```
-
-and expects aligned RGB and depth images from the G1 RealSense camera.
-
-### Initialization
-
-FoundationPose requires an object mask for the first registration frame. The current live setup uses:
-
-```text
-g1/data/live_init/
-├── rgb/000000.png
-├── depth/000000.png
-├── masks/000000.png
-└── cam_K.txt
-```
-
-The initial mask can be prepared with the provided mask utility:
+It receives a 640 × 480 RGB-D stream through ZMQ, performs one registration, and then continuously tracks the box.
 
 ```bash
-python g1/scripts/make_first_mask.py
-```
-
-Only the initialization/re-registration frame requires this mask. After registration, tracking proceeds from RGB-D frames without a new mask on every frame.
-
-### Run live tracking
-
-On the RTX workstation:
-
-```bash
-cd ~/Chris/FoundationPose
-conda activate foundationpose5080
+conda activate foundationpose
 python -u g1/scripts/live_foundationpose_box.py
 ```
 
-Controls in the visualization window:
+Controls:
 
 ```text
 q  quit
-r  freeze the current frame, redraw the box mask, and re-register
+r  redraw the object mask and re-register
 ```
 
-The script performs:
-
-```python
-pose = estimator.register(...)
-```
-
-once during initialization, followed by:
-
-```python
-pose = estimator.track_one(...)
-```
-
-for live tracking.
-
-The latest estimated pose is saved to:
+The latest estimated 4×4 pose is saved to:
 
 ```text
 g1/results/live_foundationpose/latest_pose.txt
 ```
 
-This is a 4×4 homogeneous transform representing the box pose in the camera frame.
+The pose is the object transform in the **camera coordinate frame**.
 
----
+The live loop uses:
 
-## RGB-D alignment
-
-Correct RGB/depth registration was important for this project. Early tests showed that using RGB and depth with mismatched camera geometry noticeably degraded the estimated box overlay.
-
-The G1 RealSense driver backup used for this work is under:
-
-```text
-g1/camera_server/g1_camera_server_backup/
-```
-
-The RealSense stream is aligned with:
-
-```python
-self.align = rs.align(rs.stream.color)
-frames = self.align.process(frames)
-```
-
-so the depth image corresponds to the RGB/color frame used by FoundationPose.
-
-The live camera data used by the tracker is 640 × 480 RGB-D.
-
----
-
-## Runtime performance
-
-A dedicated core benchmark is provided at:
-
-```text
-g1/scripts/benchmark_foundationpose_core.py
-```
-
-It preloads RGB-D frames into RAM, removes disk I/O and visualization overhead, performs one registration, warms up the tracker, and then measures repeated `track_one()` calls.
-
-On the Samsung RTX 5080 workstation, the measured core tracking result was approximately:
-
-| Metric | Result |
-|---|---:|
-| Core tracking throughput | **104.7 FPS** |
-| Mean tracking time | **9.55 ms/frame** |
-| p95 tracking time | **12.51 ms/frame** |
-
-This shows that the FoundationPose tracking computation itself has enough headroom for a high-rate perception loop. The complete live rate can still be lower because it also includes RealSense capture/alignment, encoding, ZMQ transfer, decoding, depth conversion, and visualization.
-
-The live tracker therefore uses several simple latency controls:
-
-- `TRACK_ITERS = 1`
-- ZMQ `CONFLATE=1`, so old frames are dropped rather than queued
-- visualization only every third pose frame
-- pose file writing only about once per second
+- `TRACK_ITERS = 1`;
+- ZMQ `CONFLATE=1` to discard stale frames rather than build latency;
+- decimated visualization;
+- reduced disk writes.
 
 The terminal reports:
 
@@ -211,151 +286,158 @@ camera-arrival FPS=... | pose-output FPS=... | track=... ms
 
 ---
 
-## Offline recording and replay
+# Runtime benchmark
 
-The repository also contains an offline workflow so perception experiments can be repeated without continuously operating the robot.
+The core benchmark is:
 
-Important scripts include:
+```bash
+python -u g1/scripts/benchmark_foundationpose_core.py
+```
+
+It preloads RGB-D frames into RAM, performs one registration, warms up the tracker, then measures repeated `track_one()` calls without normal visualization/disk-I/O overhead.
+
+### Measured result
+
+| Metric | Result |
+|---|---:|
+| Core tracking throughput | **104.7 FPS** |
+| Mean tracking time | **9.55 ms/frame** |
+| p95 tracking time | **12.51 ms/frame** |
+
+These numbers measure the FoundationPose tracking core. Full live throughput can be lower because camera capture, alignment, transfer, decoding, and visualization add overhead.
+
+---
+
+# Distance and tracking-stability results
+
+A dedicated RGB-D recording was used to evaluate FoundationPose tracking stability as the box-camera distance changed.
+
+### Recorded dataset
+
+| Item | Result |
+|---|---:|
+| Frames | **2692** |
+| Capture rate | **29.91 FPS** |
+| RGB/depth readability | **100%** |
+| RGB/depth shape match | **100%** |
+| Mean valid depth | **97.7%** |
+| AprilTag detection coverage | **91.3%** |
+| Tested distance range | **1.124–1.902 m** |
+
+AprilTag was used mainly as a **distance reference**. It was not treated as perfect 6D ground truth for FoundationPose.
+
+The analysis uses frame-to-frame FoundationPose translation and symmetry-aware rotation changes. For quasi-stationary frame pairs across all populated distance bins:
+
+| Tracking-stability metric | Result |
+|---|---:|
+| p95 translation step | **≤ ~13 mm** |
+| p95 symmetry-aware rotation step | **≤ ~4.4°** |
+| Large-jump rate | **0%** |
+
+### Conclusion
+
+FoundationPose remained stable across the full tested range of approximately **1.1–1.9 m**. No sudden tracking degradation was observed inside this interval.
+
+A conservative practical interpretation is:
+
+- **1.1–1.9 m:** validated usable tracking range in the recorded experiment;
+- **≤1.8 m:** comfortably supported by the available samples;
+- **>1.9 m:** not established by this benchmark.
+
+The 1.8–1.9 m bin contained fewer quasi-stationary samples (23 pairs), so the `≤1.8 m` statement is the more conservative one.
+
+### Important limitation of this result
+
+The sequence begins with **one successful FoundationPose registration** and then evaluates continuous `track_one()` tracking while distance changes. Therefore this experiment validates **tracking stability versus distance**, not the probability of successfully performing a fresh registration at every distance.
+
+Because the box was moved by hand, the quasi-stationary frame-to-frame changes can also include small amounts of real object motion. The reported values should therefore be interpreted as an upper-bound style stability measure rather than pure estimator noise.
+
+The analysis scripts are:
+
+```text
+g1/scripts/range_benchmark.py
+g1/scripts/offline_fp_range_analysis.py
+g1/scripts/compare_offline_fp_apriltag.py
+g1/scripts/apriltag_gt_benchmark.py
+```
+
+---
+
+# Offline recording and replay
+
+The vision pipeline can be evaluated completely offline after RGB-D data is recorded.
+
+Useful scripts include:
 
 | Script | Purpose |
 |---|---|
-| `g1/scripts/record_offline_bundle.py` | Record reusable RGB-D bundles from the G1 stream |
-| `g1/scripts/verify_offline_bundle.py` | Verify captured RGB-D data and extract AprilTag information |
-| `g1/scripts/foundationpose_offline_bundle.py` | Run FoundationPose over a recorded bundle |
-| `g1/scripts/replay_foundationpose_benchmark.py` | Replay recorded sequences for benchmarking |
-| `g1/scripts/compare_offline_fp_apriltag.py` | Visual comparison between FoundationPose and AprilTag reference geometry |
-| `g1/scripts/offline_fp_range_analysis.py` | Analyze FoundationPose continuity/stability versus object distance |
+| `g1/scripts/record_offline_bundle.py` | Record reusable RGB-D bundles |
+| `g1/scripts/verify_offline_bundle.py` | Validate RGB/depth data and extract AprilTag measurements |
+| `g1/scripts/foundationpose_offline_bundle.py` | Run FoundationPose on a recorded bundle |
+| `g1/scripts/replay_foundationpose_benchmark.py` | Replay/benchmark recorded sequences |
+| `g1/scripts/compare_offline_fp_apriltag.py` | Visual sanity comparison with AprilTag reference geometry |
+| `g1/scripts/offline_fp_range_analysis.py` | Analyze tracking stability versus distance |
 
-This workflow was used to test the tracker across recorded motion instead of relying only on a single static image.
-
----
-
-## Range and stability testing
-
-The live range benchmark is:
-
-```bash
-python -u g1/scripts/range_benchmark.py
-```
-
-The intended procedure is:
-
-1. Draw the mask once at a good initial view.
-2. Register FoundationPose once.
-3. Continuously move the box closer/farther while tracking remains active.
-4. Stop the box at selected distances and record stationary samples.
-5. Analyze translation/rotation continuity, tracking time, projected box visibility, and depth support.
-
-For offline analysis, `offline_fp_range_analysis.py` uses AprilTag detections primarily as a **distance reference**, while FoundationPose continuity is evaluated with frame-to-frame translation and symmetry-aware rotation changes.
-
-This distinction is important: the AprilTag tools in this repo are useful for sanity checking and distance/reference measurements, but the current experiments should not be described as a calibrated absolute 6D ground-truth accuracy benchmark.
-
-The box has a square 30 cm × 30 cm cross-section, so the analysis includes symmetry handling to avoid incorrectly treating equivalent box orientations as large tracking errors.
+This makes it possible to repeat tracking, timing, and distance experiments without reacquiring the same data.
 
 ---
 
-## Robot-frame integration
-
-FoundationPose directly produces:
-
-```text
-T_camera_box
-```
-
-For robot control, this can be transformed into the robot/base frame using a calibrated camera transform:
-
-```text
-T_robot_box = T_robot_camera × T_camera_box
-```
-
-Utilities related to this stage are included in:
-
-```text
-g1/scripts/derive_robot_camera_tf.py
-g1/scripts/offline_root_pipeline.py
-g1/scripts/visualize_root_pipeline.py
-g1/config/root_pipeline_demo.json
-```
-
-These scripts support the next system stage: turning perceived box poses into target information for humanoid approach, grasping, carrying, and placement.
-
----
-
-## Project structure
+# Project structure
 
 ```text
 FoundationPose/
-├── box.obj                         # 40 × 30 × 30 cm box mesh
-├── makee_box.py                    # box mesh generator
-├── estimater.py                    # FoundationPose estimator/tracker
-├── run_demo.py                     # original model-based demo entry point
-├── ENV_SETUP.md                    # local environment notes
+├── box.obj
+├── makee_box.py
+├── estimater.py
+├── run_demo.py
+├── capture_realsense_box.py
+├── check_env.py
+├── environment.yml
+├── requirements.txt
+├── ENV_SETUP.md
 │
 └── g1/
-    ├── camera_server/              # G1 camera-server backup / RealSense alignment
-    ├── config/                     # transform / offline pipeline configs
-    ├── data/                       # small tracked configuration/data files
+    ├── camera_server/              # RGB-D camera integration / alignment
+    ├── data/                       # small configuration/example data
     └── scripts/
         ├── live_foundationpose_box.py
         ├── make_first_mask.py
         ├── record_offline_bundle.py
+        ├── verify_offline_bundle.py
         ├── foundationpose_offline_bundle.py
+        ├── replay_foundationpose_benchmark.py
         ├── benchmark_foundationpose_core.py
         ├── range_benchmark.py
         ├── offline_fp_range_analysis.py
         ├── apriltag_gt_benchmark.py
-        ├── compare_offline_fp_apriltag.py
-        ├── derive_robot_camera_tf.py
-        └── offline_root_pipeline.py
+        └── compare_offline_fp_apriltag.py
 ```
 
-Large recordings, logs, and generated result folders are intentionally not treated as source files and should remain outside normal Git commits.
+Large RGB-D recordings, generated visualizations, benchmark outputs, and logs should remain outside normal Git commits.
 
 ---
 
-## Environment
+# Current limitation
 
-The Samsung development machine uses a recent NVIDIA GPU/CUDA stack. The working FoundationPose environment used during the G1 tests is named:
+The main remaining perception limitation is initialization:
 
-```bash
-conda activate foundationpose5080
-```
+> **The first object mask is manually supplied.**
 
-The project was brought up with CUDA 12.8-compatible PyTorch and locally built CUDA extensions needed by FoundationPose/PyTorch3D/NVDiffRast.
-
-For detailed installation notes, see:
-
-```text
-ENV_SETUP.md
-```
-
-The exact environment may need small changes depending on GPU generation and CUDA installation.
+After registration, FoundationPose tracks continuously without requiring a new segmentation mask on each frame. A detector or segmentation model could be added later if fully automatic initialization is required.
 
 ---
 
-## Current limitation
+# Upstream FoundationPose
 
-The main perception limitation is initialization:
+This repository is based on the official NVIDIA Research implementation:
 
-> **The first box mask is manually supplied.**
-
-After initialization, FoundationPose tracks continuously without requiring a fresh mask each frame. A future version could replace manual initialization with an object detector/segmenter if fully automatic startup is required.
-
-Other downstream work, such as camera-to-robot calibration validation and connecting the pose output to a humanoid controller, is considered integration work rather than a missing FoundationPose tracking capability.
-
----
-
-## Upstream FoundationPose
-
-This project is based on the official NVIDIA Research implementation:
-
-- FoundationPose repository: https://github.com/NVlabs/FoundationPose
+- Repository: https://github.com/NVlabs/FoundationPose
 - Project page: https://nvlabs.github.io/FoundationPose/
 - Paper: *FoundationPose: Unified 6D Pose Estimation and Tracking of Novel Objects*, CVPR 2024 Highlight
 
-Please refer to the upstream repository for the original pretrained weights, public-dataset instructions, model-free pipeline, and full FoundationPose documentation.
+Please refer to the upstream project for the original pretrained weights, public-dataset instructions, model-free workflow, and full method documentation.
 
-### Citation
+## Citation
 
 ```bibtex
 @InProceedings{foundationposewen2024,
@@ -366,6 +448,6 @@ Please refer to the upstream repository for the original pretrained weights, pub
 }
 ```
 
-## License
+# License
 
 The upstream FoundationPose code and data are released under the NVIDIA Source Code License. See `LICENSE` and the original NVIDIA repository for details.
