@@ -19,6 +19,29 @@ def parse_args():
     p.add_argument('--bundle', required=True)
     p.add_argument('--max-frames', type=int, default=0, help='0 = all frames')
     p.add_argument('--vis-every', type=int, default=VIS_EVERY)
+    p.add_argument(
+        '--mask-file', default='',
+        help=(
+            'Optional binary mask for first frame. If omitted, uses/saves '
+            '<output-dir>/initial_mask.png and opens the drawing UI when missing.'
+        ),
+    )
+    p.add_argument(
+        '--output-dir', default='',
+        help=(
+            'Optional output directory. Default: <bundle>/foundationpose_offline. '
+            'For multi-instance replay use separate directories, e.g. '
+            '<bundle>/foundationpose_instances/carried and .../support.'
+        ),
+    )
+    p.add_argument(
+        '--window-name', default='FoundationPose OFFLINE bundle replay',
+        help='Visualization window title.',
+    )
+    p.add_argument(
+        '--no-display', action='store_true',
+        help='Disable cv2.imshow while still writing pose CSV/latest pose.',
+    )
     return p.parse_args()
 
 
@@ -73,6 +96,22 @@ def mask_ui(rgb):
             return None
 
 
+def load_binary_mask(path, expected_shape):
+    mask = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    if mask is None:
+        raise RuntimeError(f'Failed to read mask: {path}')
+    if mask.ndim == 3:
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+    if mask.shape[:2] != tuple(expected_shape):
+        raise RuntimeError(
+            f'Mask shape {mask.shape[:2]} does not match RGB shape {tuple(expected_shape)}: {path}'
+        )
+    mask = mask > 0
+    if int(mask.sum()) < 20:
+        raise RuntimeError(f'Mask is empty or too small: {path}')
+    return mask
+
+
 def fps_from_times(ts):
     if len(ts) < 2:
         return 0.0
@@ -101,9 +140,11 @@ def main():
     center_tf = np.linalg.inv(to_origin)
     bbox = np.stack([-extents / 2, extents / 2], axis=0).reshape(2, 3)
 
-    out = bundle / 'foundationpose_offline'
-    out.mkdir(exist_ok=True)
-    mask_file = out / 'initial_mask.png'
+    out = Path(args.output_dir) if args.output_dir else bundle / 'foundationpose_offline'
+    if not out.is_absolute():
+        out = ROOT / out
+    out.mkdir(parents=True, exist_ok=True)
+    default_mask_file = out / 'initial_mask.png'
     pose_csv = out / 'foundationpose_poses.csv'
 
     est = FoundationPose(
@@ -121,18 +162,32 @@ def main():
     dep0_raw = cv2.imread(str(bundle / rows[0]['depth_file']), cv2.IMREAD_UNCHANGED)
     dep0 = depth_m(dep0_raw)
 
-    if mask_file.exists():
-        mask = cv2.imread(str(mask_file), cv2.IMREAD_UNCHANGED).astype(bool)
-        print('Using saved mask:', mask_file)
+    if args.mask_file:
+        mask_path = Path(args.mask_file)
+        if not mask_path.is_absolute():
+            mask_path = ROOT / mask_path
+        mask = load_binary_mask(mask_path, rgb0.shape[:2])
+        cv2.imwrite(str(default_mask_file), mask.astype(np.uint8) * 255)
+        print('Using supplied mask:', mask_path)
+        print('Saved instance mask copy:', default_mask_file)
+    elif default_mask_file.exists():
+        mask = load_binary_mask(default_mask_file, rgb0.shape[:2])
+        print('Using saved mask:', default_mask_file)
     else:
+        if args.no_display:
+            raise RuntimeError(
+                'No mask available. With --no-display, provide --mask-file or pre-create '
+                f'{default_mask_file}'
+            )
         mask = mask_ui(rgb0)
         if mask is None:
             print('Cancelled.')
             return
-        cv2.imwrite(str(mask_file), mask.astype(np.uint8) * 255)
-        print('Saved mask:', mask_file)
+        cv2.imwrite(str(default_mask_file), mask.astype(np.uint8) * 255)
+        print('Saved mask:', default_mask_file)
 
     print(f'OFFLINE FOUNDATIONPOSE | frames={len(rows)} | register={REGISTER_ITERS} | track={TRACK_ITERS}')
+    print('output:', out)
     t0 = time.perf_counter()
     pose = est.register(K=K, rgb=rgb0, depth=dep0, ob_mask=mask, iteration=REGISTER_ITERS)
     print(f'Registration OK: {(time.perf_counter()-t0)*1000.0:.1f} ms')
@@ -180,7 +235,7 @@ def main():
             writer.writerow(outrow)
             processed += 1
 
-            if i % max(args.vis_every, 1) == 0:
+            if not args.no_display and i % max(args.vis_every, 1) == 0:
                 vis = draw_posed_3d_box(K, img=rgb, ob_in_cam=cp, bbox=bbox)
                 vis = draw_xyz_axis(vis, ob_in_cam=cp, scale=0.1, K=K,
                                     thickness=3, transparency=0, is_input_rgb=True)
@@ -188,9 +243,9 @@ def main():
                 txt = f'FP frame {i}/{len(rows)-1} | d={distance_m:.3f}m | track={track_ms:.1f}ms'
                 cv2.putText(show, txt, (10, 28), cv2.FONT_HERSHEY_SIMPLEX,
                             0.52, (0, 255, 0), 2)
-                cv2.imshow('FoundationPose OFFLINE bundle replay', show)
+                cv2.imshow(args.window_name, show)
 
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            if not args.no_display and cv2.waitKey(1) & 0xFF == ord('q'):
                 print('Stopped by Q.')
                 break
             if i > 0 and i % 100 == 0:
@@ -198,13 +253,15 @@ def main():
     finally:
         f.flush()
         f.close()
-        cv2.destroyAllWindows()
+        if not args.no_display:
+            cv2.destroyAllWindows()
 
     elapsed = time.perf_counter() - start
     mean_track = float(np.mean(track_times)) if track_times else 0.0
     np.savetxt(out / 'latest_pose.txt', pose)
     print(f'DONE | processed={processed} | wall FPS={processed/max(elapsed,1e-6):.2f} | mean recent track={mean_track:.1f} ms')
     print('saved:', pose_csv)
+    print('latest:', out / 'latest_pose.txt')
 
 
 if __name__ == '__main__':
