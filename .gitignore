@@ -164,3 +164,14 @@ g1/results/
 g1/logs/
 debug_box_test/
 *.pre_align_backup
+g1/data/handheld_three_box_*/
+g1/data/current_task
+g1/data/current_task/
+g1/data/fp_init_A/
+g1/data/fp_init_C/
+g1/data/*/track_A/
+g1/data/*/track_C/
+g1/data/*/target_from_C/
+g1/data/*/*contact_sheet*.jpg
+g1/data/*/*.log
+g1/data/*/*.mp4
