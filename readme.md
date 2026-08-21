@@ -37,7 +37,7 @@ Reference box C → FoundationPose → pose C → target B
 
 In the visualization, **red** denotes the carried box A, **green** the reference box C, and **blue** the generated target pose B. Instance identity is currently established by the separate initialization masks; automatic instance detection is not yet part of the pipeline.
 
-> A representative A/C/B result image will be added here from the recorded multi-box sequence.
+![Multi-box FoundationPose tracking and target pose](assets/demo/multi_box_tracking.png)
 
 ---
 
