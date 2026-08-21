@@ -26,6 +26,19 @@ RGB + aligned depth + camera intrinsics + box mesh
 
 The animated preview is a 10-second excerpt from the recorded RGB-D tracking sequence. It shows the FoundationPose box/axes together with the tracking FPS, tracking time, frame index, and estimated distance.
 
+### Multi-box tracking and target pose generation
+
+The offline pipeline also supports tracking two identical box instances with the same CAD model. The carried box **A** and reference box **C** are initialized with separate masks and maintained as independent FoundationPose tracking streams. The pose of **C** is then used to generate the desired placement target **B** for **A**.
+
+```text
+Carried box A   → FoundationPose → pose A
+Reference box C → FoundationPose → pose C → target B
+```
+
+In the visualization, **red** denotes the carried box A, **green** the reference box C, and **blue** the generated target pose B. Instance identity is currently established by the separate initialization masks; automatic instance detection is not yet part of the pipeline.
+
+> A representative A/C/B result image will be added here from the recorded multi-box sequence.
+
 ---
 
 # Environment setup
