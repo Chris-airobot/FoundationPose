@@ -9,6 +9,23 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from automatic_object_mask import (
+    AutomaticMaskConfig,
+    AutomaticMaskError,
+    generate_object_mask,
+    save_mask_debug,
+)
+
+
+def parse_roi(value: str) -> tuple[int, int, int, int]:
+    try:
+        roi = tuple(int(part) for part in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("ROI must be x0,y0,x1,y1") from exc
+    if len(roi) != 4:
+        raise argparse.ArgumentTypeError("ROI must be x0,y0,x1,y1")
+    return roi
+
 
 def parse_args() -> argparse.Namespace:
     repo_dir = Path(__file__).resolve().parent
@@ -42,6 +59,30 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=30,
         help="Frames discarded before preview (default: 30).",
+    )
+    parser.add_argument(
+        "--mask-mode",
+        choices=("auto", "manual"),
+        default="auto",
+        help="First-frame mask source (default: auto).",
+    )
+    parser.add_argument(
+        "--workspace-roi",
+        type=parse_roi,
+        help="Tabletop image crop as x0,y0,x1,y1 (default: full frame).",
+    )
+    parser.add_argument("--min-depth-m", type=float, default=0.15)
+    parser.add_argument("--max-depth-m", type=float, default=2.0)
+    parser.add_argument("--table-ransac-threshold-m", type=float, default=0.008)
+    parser.add_argument("--min-object-height-m", type=float, default=0.012)
+    parser.add_argument("--max-object-height-m", type=float, default=0.30)
+    parser.add_argument("--cluster-tolerance-m", type=float, default=0.010)
+    parser.add_argument("--min-cluster-pixels", type=int, default=200)
+    parser.add_argument("--mask-morphology-kernel-px", type=int, default=5)
+    parser.add_argument(
+        "--manual-fallback",
+        action="store_true",
+        help="Open the manual mask selector if automatic generation fails.",
     )
     return parser.parse_args()
 
@@ -129,6 +170,20 @@ def select_box_mask(color_bgr: np.ndarray) -> np.ndarray | None:
     return mask
 
 
+def automatic_mask_config(args: argparse.Namespace) -> AutomaticMaskConfig:
+    return AutomaticMaskConfig(
+        workspace_roi=args.workspace_roi,
+        min_depth_m=args.min_depth_m,
+        max_depth_m=args.max_depth_m,
+        table_ransac_threshold_m=args.table_ransac_threshold_m,
+        min_object_height_m=args.min_object_height_m,
+        max_object_height_m=args.max_object_height_m,
+        cluster_tolerance_m=args.cluster_tolerance_m,
+        min_cluster_pixels=args.min_cluster_pixels,
+        morphology_kernel_px=args.mask_morphology_kernel_px,
+    )
+
+
 def main() -> int:
     args = parse_args()
     if args.width <= 0 or args.height <= 0 or args.fps <= 0:
@@ -193,7 +248,8 @@ def main() -> int:
         print(f"Camera: {device_name}")
         print(f"Serial: {serial}")
         print(f"Depth scale: {depth_scale} metres/unit")
-        print("Press S to select the box and start recording; press Q to stop.")
+        print(f"First-frame mask mode: {args.mask_mode}")
+        print("Press S to create the first mask and start recording; press Q to stop.")
 
         for _ in range(args.warmup_frames):
             pipeline.wait_for_frames()
@@ -226,7 +282,7 @@ def main() -> int:
             message = (
                 f"Recording frame {frame_index} - Q: stop"
                 if recording
-                else "S: select box and record - Q: quit"
+                else f"S: {args.mask_mode} mask and record - Q: quit"
             )
             cv2.putText(
                 preview,
@@ -249,12 +305,38 @@ def main() -> int:
                 break
 
             if not recording and key in (ord("s"), ord("S")):
-                mask = select_box_mask(color_bgr)
+                automatic_succeeded = False
+                if args.mask_mode == "auto":
+                    depth_m = depth_raw.astype(np.float32) * depth_scale
+                    try:
+                        mask = generate_object_mask(
+                            depth_m,
+                            camera_matrix,
+                            automatic_mask_config(args),
+                        )
+                        automatic_succeeded = True
+                        print(f"Automatic mask contains {np.count_nonzero(mask)} pixels.")
+                    except AutomaticMaskError as exc:
+                        print(f"Automatic mask failed: {exc}")
+                        if not args.manual_fallback:
+                            print("Press S to retry, or use --manual-fallback/--mask-mode manual.")
+                            continue
+                        print("Falling back to manual mask selection.")
+                        mask = select_box_mask(color_bgr)
+                else:
+                    mask = select_box_mask(color_bgr)
                 if mask is None:
                     print("No box rectangle selected; returning to preview.")
                     continue
 
                 prepare_output_dir(args.output_dir)
+                if automatic_succeeded:
+                    debug_path = args.output_dir / "automatic_mask_debug.png"
+                    try:
+                        save_mask_debug(debug_path, color_bgr, mask)
+                    except AutomaticMaskError as exc:
+                        raise RuntimeError(str(exc)) from exc
+                    print(f"Saved automatic-mask debug image to {debug_path}")
                 np.savetxt(args.output_dir / "cam_K.txt", camera_matrix, fmt="%.10f")
                 save_frame(
                     args.output_dir,
