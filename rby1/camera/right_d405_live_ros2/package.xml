@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>right_d405_live</name>
+  <version>0.0.1</version>
+  <description>Live aligned RGB-D publisher for the RBY1 right D405.</description>
+
+  <maintainer email="nvidia@example.com">nvidia</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
