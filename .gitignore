@@ -175,3 +175,6 @@ g1/data/*/target_from_C/
 g1/data/*/*contact_sheet*.jpg
 g1/data/*/*.log
 g1/data/*/*.mp4
+# RBY1 live snapshots and generated perception outputs
+rby1/live_input/
+rby1/runtime/
